@@ -3,6 +3,8 @@
 
 #define __STDC_CONSTANT_MACROS
 
+#define SDL_MAIN_HANDLED
+
 extern "C"
 {
 #include "libavcodec/avcodec.h"
@@ -57,7 +59,7 @@ int main(int argc, char *args[])
 
     struct SwsContext *img_convert_ctx;
 
-    char filepath[]="C:\\Users\\ubuntu\\Desktop\\xiamu.flv";
+    char filepath[]="E:\\FFmpegSDL_Playertest\\xiamu.flv";
 
     av_register_all();
     avformat_network_init();
