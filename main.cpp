@@ -114,7 +114,7 @@ int stream_component_open(VideoState *is, int stream_index) {
     AVFormatContext *pFormatCtx = is->pFormatCtx;
     AVCodecContext *codecCtx;
     AVCodec *codec;
-    SDL_AudioSpec wanted_spec, spec;
+    SDL_AudioSpec wanted_spec ;
 
     if(stream_index < 0 || stream_index >= pFormatCtx->nb_streams) {
         return -1;
@@ -143,8 +143,8 @@ int stream_component_open(VideoState *is, int stream_index) {
         wanted_spec.callback = audio_callback;
         wanted_spec.userdata = is;
 
-        if(SDL_OpenAudio(&wanted_spec, &spec) < 0) {
-            fprintf(stderr, "SDL_OpenAudio: %s\n", SDL_GetError());
+        if(SDL_OpenAudio(&wanted_spec, NULL) < 0) {
+            cout << "SDL OpenAudio failure: " <<SDL_GetError() << endl;
             return -1;
         }
     }
@@ -167,13 +167,13 @@ int stream_component_open(VideoState *is, int stream_index) {
         uint64_t out_chn_layout = AV_CH_LAYOUT_STEREO;
         enum AVSampleFormat out_sample_fmt=AV_SAMPLE_FMT_S16;
         int out_sample_rate=44100;
-        int out_nb_samples = is->audio_ctx->frame_size;
+        int out_nb_samples = codecCtx->frame_size;
         int out_channels = av_get_channel_layout_nb_channels(out_chn_layout);
-        uint64_t in_chn_layout = av_get_default_channel_layout(is->audio_ctx->channels);
+        uint64_t in_chn_layout = av_get_default_channel_layout(codecCtx->channels);
 
         is->audio_buf_size = av_samples_get_buffer_size(NULL, out_channels, out_nb_samples,  out_sample_fmt, 1);
         is->swr_ctx = swr_alloc_set_opts(NULL, out_chn_layout, out_sample_fmt, out_sample_rate,
-                                       in_chn_layout, is->audio_ctx->sample_fmt , is->audio_ctx->sample_rate,  0,  NULL);
+                                       in_chn_layout, codecCtx->sample_fmt , codecCtx->sample_rate,  0,  NULL);
 
         swr_init(is->swr_ctx);
 
@@ -198,14 +198,8 @@ int stream_component_open(VideoState *is, int stream_index) {
                                      SWS_BILINEAR, NULL, NULL, NULL
                                      );
 
-
-        if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
-            cout << "Could not initialize SDL : " << SDL_GetError() << endl;
-            return;
-        }
-
-        is->screen_w = is->video_ctx->width;
-        is->screen_h = is->video_ctx->height;
+        is->screen_w = 500;
+        is->screen_h = 500;
         is->screen = SDL_CreateWindow("Simplest ffmpeg player's Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
             is->screen_w, is->screen_h,SDL_WINDOW_OPENGL);
 
@@ -220,11 +214,6 @@ int stream_component_open(VideoState *is, int stream_index) {
         is->sdlRect.y=0;
         is->sdlRect.w=is->video_ctx->width;
         is->sdlRect.h=is->video_ctx->height;
-
-        is->dstrect.x=0;
-        is->dstrect.y=0;
-        is->dstrect.w=is->screen_w;
-        is->dstrect.h=is->screen_w;
         break;
     default:
         break;
@@ -260,6 +249,11 @@ int main(int argc, char *args[])
 
     av_dump_format(is->pFormatCtx, 0, is->filename, 0);
 
+    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
+        cout << "Could not initialize SDL : " << SDL_GetError() << endl;
+        return;
+    }
+
     for (unsigned int i=0; i<is->pFormatCtx->nb_streams; i++)
         stream_component_open(is, i);
 
@@ -273,13 +267,29 @@ int main(int argc, char *args[])
 
 
     for(;;) {
-      SDL_WaitEvent(&event);
-      switch(event.type) {
-      case FF_REFRESH_EVENT:
-          video_refresh_timer(event.user.data1);
-          break;
-      }
+        SDL_WaitEvent(&event);
+        switch(event.type)
+        {
+            case FF_REFRESH_EVENT:
+            {
+                video_refresh_timer(event.user.data1);
+                break;
+            }
+
+            case SDL_QUIT:
+            {
+                SDL_CloseAudio();//Close SDL
+                SDL_Quit();
+
+                av_free(is);
+
+                return;
+            }
+        }
     }
+
+
+    return 0;
 }
 
 

@@ -2,7 +2,7 @@
 #define DEFINESTRUCT_H
 
 #define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
-#define VIDEO_PICTURE_QUEUE_SIZE 10
+#define VIDEO_PICTURE_QUEUE_SIZE 5
 #define SDL_MAIN_HANDLED
 
 #define SDL_MAIN_HANDLED
@@ -213,12 +213,35 @@ void video_display(VideoState *is)
     VideoPicture *vp;
     vp = &is->pictq[is->pictq_rindex];
     if(vp->bmp) {
-//        SDL_LockMutex(is->screen_mutex);
+
+        // SDL window size fix, calculate dstrect
+        float aspect_ratio1 = (float)is->video_ctx->width / (float)is->screen_w;
+        float aspect_ratio2 = (float)is->video_ctx->height / (float)is->screen_h;
+        if (aspect_ratio1 > aspect_ratio2 ) {
+            is->dstrect.w=is->screen_w;
+            is->dstrect.h=is->screen_h * aspect_ratio2;
+
+            is->dstrect.x=0;
+            is->dstrect.y=(is->screen_h-is->dstrect.h) / 2 ;
+
+        } else if (aspect_ratio1 < aspect_ratio2 ) {
+            is->dstrect.x=(is->screen_w-is->dstrect.w) / 2;
+            is->dstrect.y=0;
+            is->dstrect.w=is->screen_w * aspect_ratio1;
+            is->dstrect.h=is->screen_h;
+        } else {
+            is->dstrect.x=0;
+            is->dstrect.y=0;
+            is->dstrect.w=is->screen_w;
+            is->dstrect.h=is->screen_h;
+        }
+
+        SDL_LockMutex(is->screen_mutex);
         SDL_UpdateTexture( is->sdlTexture, NULL, vp->bmp->data[0], vp->bmp->linesize[0] );
         SDL_RenderClear( is->sdlRenderer );
         SDL_RenderCopy( is->sdlRenderer, is->sdlTexture, &is->sdlRect, &is->dstrect );
         SDL_RenderPresent( is->sdlRenderer );
-//        SDL_UnlockMutex(is->screen_mutex);
+        SDL_UnlockMutex(is->screen_mutex);
     }
 }
 
