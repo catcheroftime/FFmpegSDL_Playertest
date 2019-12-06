@@ -30,7 +30,7 @@ void video_refresh_timer(void *userdata)
             vp = &is->pictq[is->pictq_rindex];
             /* Timing code goes here */
 
-            schedule_refresh(is, 80);
+            schedule_refresh(is, 35);
 
             /* show the picture! */
             video_display(is);

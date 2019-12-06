@@ -36,8 +36,6 @@ enum AVHWDeviceType {
     AV_HWDEVICE_TYPE_DRM,
     AV_HWDEVICE_TYPE_OPENCL,
     AV_HWDEVICE_TYPE_MEDIACODEC,
-    // fyf
-    AV_HWDEVICE_TYPE_NUM
 };
 
 typedef struct AVHWDeviceInternal AVHWDeviceInternal;
