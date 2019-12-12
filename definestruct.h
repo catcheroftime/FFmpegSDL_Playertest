@@ -2,15 +2,19 @@
 #define DEFINESTRUCT_H
 
 #define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
-#define VIDEO_PICTURE_QUEUE_SIZE 5
+#define VIDEO_PICTURE_QUEUE_SIZE 1
 #define SDL_MAIN_HANDLED
 
 #define SDL_MAIN_HANDLED
 
-#define MAX_AUDIOQ_SIZE 10
-#define MAX_VIDEOQ_SIZE 10
+#define MAX_AUDIOQ_SIZE (5 * 16 * 1024)
+#define MAX_VIDEOQ_SIZE (5 * 256 * 1024)
 
-#define FF_REFRESH_EVENT  (SDL_USEREVENT + 1)
+#define AV_SYNC_THRESHOLD 0.01
+#define AV_NOSYNC_THRESHOLD 10.0
+
+#define FF_REFRESH_EVENT (SDL_USEREVENT)
+#define FF_QUIT_EVENT (SDL_USEREVENT + 1)
 
 extern "C"
 {
@@ -19,6 +23,7 @@ extern "C"
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
 #include "libswresample/swresample.h"
+#include "libavutil/time.h"
 #include <SDL2/SDL.h>
 }
 
@@ -35,6 +40,7 @@ typedef struct VideoPicture {
     AVFrame *bmp;
     int width, height; /* source height & width */
     int allocated;
+    double pts;
 } VideoPicture;
 
 typedef struct VideoState {
@@ -61,6 +67,13 @@ typedef struct VideoState {
     AVFrame           *yuvframe;
     VideoPicture      pictq[VIDEO_PICTURE_QUEUE_SIZE];
     int               pictq_size, pictq_rindex, pictq_windex;
+
+    double            frame_timer;
+    double            frame_last_delay;
+    double            frame_last_pts;
+    double            video_clock;
+    double            audio_clock ;
+
     SDL_mutex         *pictq_mutex;
     SDL_cond          *pictq_cond;
 
@@ -162,7 +175,7 @@ void alloc_picture(void *userdata) {
   vp->allocated = 1;
 }
 
-int queue_picture(VideoState *is, AVFrame *pFrame) {
+int queue_picture(VideoState *is, AVFrame *pFrame, double pts) {
 
     VideoPicture *vp;
     int dst_pix_fmt;
@@ -196,6 +209,8 @@ int queue_picture(VideoState *is, AVFrame *pFrame) {
         sws_scale(is->sws_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, is->video_ctx->height, is->yuvframe->data, is->yuvframe->linesize);
 
         memcpy(vp->bmp, is->yuvframe, sizeof(AVFrame));
+
+        vp->pts = pts;
 
         /* now we inform our display thread that we have a pic ready */
         if(++is->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE) {
@@ -259,6 +274,11 @@ int audio_decode_frame(VideoState *is, uint8_t *audio_buf, int buf_size)
         {
             int got_frame = 0;
             len1 = avcodec_decode_audio4(is->audio_ctx, &frame, &got_frame, &pkt);
+
+            if(pkt.pts != AV_NOPTS_VALUE) {
+                 is->audio_clock = av_q2d(is->audio_st->time_base)* (pkt.pts);
+            }
+
             if(len1 < 0)
             {
                 audio_pkt_size = 0;
@@ -334,6 +354,38 @@ void audio_callback(void *userdata, Uint8 *stream, int len)
          stream += len1;
          audio_buf_index += len1;
      }
+}
+
+double synchronize_video(VideoState *is, AVFrame *src_frame, double pts){
+    double frame_delay;
+
+    if (pts !=0 ) {
+        is->video_clock = pts;
+    } else {
+        pts = is->video_clock;
+    }
+
+    frame_delay = av_q2d(is->video_st->codec->time_base);
+    frame_delay += src_frame->repeat_pict * (frame_delay * 0.5);
+    is->video_clock += frame_delay;
+    return pts;
+}
+
+double get_audio_clock(VideoState *is) {
+    double pts;
+    int hw_buf_size, bytes_per_sec, n;
+
+    pts = is->audio_clock; /* maintained in the audio thread */
+    hw_buf_size = is->audio_buf_size - is->audio_buf_index;
+    bytes_per_sec = 0;
+    n = is->audio_st->codec->channels * 2;
+    if(is->audio_st) {
+        bytes_per_sec = is->audio_st->codec->sample_rate * n;
+    }
+    if(bytes_per_sec) {
+        pts -= (double)hw_buf_size / bytes_per_sec;
+    }
+    return pts;
 }
 
 #endif // DEFINESTRUCT_H

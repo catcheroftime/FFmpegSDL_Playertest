@@ -4,7 +4,6 @@
 #include "definestruct.h"
 
 using namespace std;
-//#include "player.h"
 
 static Uint32 sdl_refresh_timer_cb(Uint32 interval, void *opaque) {
     SDL_Event event;
@@ -22,15 +21,41 @@ void video_refresh_timer(void *userdata)
 {
     VideoState *is = (VideoState *)userdata;
     VideoPicture *vp;
+    double actual_delay, delay, sync_threshold, ref_clock, diff;
 
     if(is->video_st) {
         if(is->pictq_size == 0) {
             schedule_refresh(is, 1);
         } else {
             vp = &is->pictq[is->pictq_rindex];
-            /* Timing code goes here */
+            delay = vp->pts - is->frame_last_pts;
+            if (delay <=0 || delay >= 1.0) {
+                delay = is->frame_last_delay ;
+            }
 
-            schedule_refresh(is, 35);
+            is->frame_last_delay  = delay;
+            is->frame_last_pts = vp->pts;
+
+            ref_clock = get_audio_clock(is);
+            diff = vp->pts - ref_clock;
+            sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
+            if(fabs(diff) < AV_NOSYNC_THRESHOLD) {
+                if(diff <= -sync_threshold) {
+                    delay = 0;
+                } else if(diff >= sync_threshold) {
+                    delay = 2 * delay;
+                }
+            }
+
+            is->frame_timer += delay;
+            /* computer the REAL delay */
+            actual_delay = is->frame_timer - (av_gettime() / 1000000.0);
+            if(actual_delay < 0.010) {
+                /* Really it should skip the picture instead */
+                actual_delay = 0.010;
+            }
+
+            schedule_refresh(is, (int)(actual_delay * 1000 + 0.5));
 
             /* show the picture! */
             video_display(is);
@@ -90,16 +115,27 @@ int video_thread(void *arg) {
 
     pFrame = av_frame_alloc();
 
+    double pts;
     for(;;) {
         if(packet_queue_get(&is->videoq, packet, 1) < 0) {
             break;
         }
+
+        pts = 0;
+
         // Decode video frame
         avcodec_decode_video2(is->video_ctx, pFrame, &frameFinished, packet);
+        if ( packet->dts != AV_NOPTS_VALUE) {
+            pts = packet->dts;
+        } else {
+            pts = 0;
+        }
 
+        pts *= av_q2d(is->video_st->time_base);
         // Did we get a video frame?
         if(frameFinished) {
-            if(queue_picture(is, pFrame) < 0) {
+            pts = synchronize_video(is, pFrame, pts);
+            if(queue_picture(is, pFrame, pts) < 0) {
                 break;
             }
         }
@@ -188,6 +224,9 @@ int stream_component_open(VideoState *is, int stream_index) {
         is->video_st = pFormatCtx->streams[stream_index];
         is->video_ctx = codecCtx;
         is->yuvframe = av_frame_alloc();
+        is-> frame_timer =(double)av_gettime()/ 1000000.0 ;
+        is-> frame_last_delay = 40e-3;
+
         is->video_out_buffer = (uint8_t *)av_malloc(avpicture_get_size(AV_PIX_FMT_YUV420P, is->video_ctx->width, is->video_ctx->height));
         avpicture_fill((AVPicture *)is->yuvframe, is->video_out_buffer, AV_PIX_FMT_YUV420P, is->video_ctx->width, is->video_ctx->height);
         packet_queue_init(&is->videoq);
@@ -268,23 +307,17 @@ int main(int argc, char *args[])
 
     for(;;) {
         SDL_WaitEvent(&event);
-        switch(event.type)
-        {
-            case FF_REFRESH_EVENT:
-            {
-                video_refresh_timer(event.user.data1);
-                break;
-            }
-
-            case SDL_QUIT:
-            {
-                SDL_CloseAudio();//Close SDL
-                SDL_Quit();
-
-                av_free(is);
-
-                return;
-            }
+        switch(event.type) {
+        case SDL_QUIT:
+            is->quit = 1;
+            SDL_Quit();
+            return 0;
+            break;
+        case FF_REFRESH_EVENT:
+            video_refresh_timer(event.user.data1);
+            break;
+        default:
+            break;
         }
     }
 
